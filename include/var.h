@@ -12,6 +12,7 @@
 #include "arr.h"
 #include "str.h"
 #include <math.h>
+#include <initializer_list>
 
 /**
  * The null Variant.
@@ -716,6 +717,18 @@ public:
     bool addEnv(const char* varname, const Variant& value = vEmpty);
 
     /**
+     * Executes the function object with any number of parameters.
+     *
+     * This method is called with a brace-enclosed parameter list - see
+     * \ref func.cpp for an example.
+     *
+     * The overloads of operator() taking zero to four parameters call this
+     * method to do real work and return the result. They can therefore
+     * be used as shorthand if only four arguments are needed.
+     */
+    Variant operator() (std::initializer_list<const jvar::Variant>&& values);
+
+    /**
      * Executes the function object with no parameters.
      */
     Variant operator() ();
@@ -954,7 +967,7 @@ public:
     void internalAdd(const Variant& lhs, const Variant& rhs);
     void internalSetPtr(const Variant* v);
 
-/** \endcond */
+    /** \endcond */
 };
 
 /** \cond INTERNAL */
