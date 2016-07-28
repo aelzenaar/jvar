@@ -181,7 +181,7 @@ public:
     }
 
     /**
-     * Assigns a variant by copying it
+     * Assigns a variant by copying it from a reference.
      */
     inline Variant& operator=(const Variant& src)
     {
@@ -190,7 +190,7 @@ public:
     }
 
     /**
-     * Assigns a variant by copying it
+     * Assigns a variant by copying it from the object pointed to by the argument.
      */
     inline Variant& operator=(const Variant* src)
     {
@@ -199,7 +199,7 @@ public:
     }
 
     /**
-     * Assigns a string (changes type if needed)
+     * Assigns a string from a C-string (changes type if needed)
      */
     inline Variant& operator=(const char* src)
     {
@@ -208,7 +208,7 @@ public:
     }
 
     /**
-     * Assigns a string (changes type if needed)
+     * Assigns a string from an std::string (changes type if needed)
      */
     inline Variant& operator=(const std::string& src)
     {
@@ -235,7 +235,7 @@ public:
     }
 
     /**
-     * Assigns a int (changes type if needed)
+     * Assigns an int (changes type if needed)
      */
     inline Variant& operator=(int src)
     {
@@ -268,7 +268,14 @@ public:
      * if they are ints, the result is an int.  If both are double, the result is a double.  If both
      * are strings, the result is a concatenated string.  If the types are different, the variants are
      * first converted into strings and then concatenated.
+     *
+     * For example, if the Variants containing 2.0 and "pig" were added, the result would be a Variant
+     * containing "2.0pig".
+     *
+     * @see Variant::makeString
      */
+
+    ///TODO: Can we use templates to prevent so much repeated code for ::operator+= ?
 
     /**
      * @ref AddingVariants
