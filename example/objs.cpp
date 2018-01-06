@@ -86,9 +86,31 @@ void showObjOfArr()
     showIter(obj);
 }
 
+#if __cplusplus > 199711L
+void showAltInit2()
+{
+    Variant obj = {
+        { "PropA", 110 },
+        { "PropB", "my value" },
+        { "PropC", { { "PropOfNestedObj", "my value" } } },
+        { "PropD", { 100, 200, 300, 400, 500 } },
+    };
+
+    showIter(obj);
+}
+
+#endif
+
 int main(int argc, char** argv)
 {
     showSimple();
     showAltInit();
     showObjOfArr();
+    showSimple();
+    showAltInit();
+    showObjOfArr();
+
+#if __cplusplus > 199711L
+    showAltInit2();
+#endif
 }

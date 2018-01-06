@@ -1,6 +1,6 @@
 /**
  * @file include/var.h
- * Declares the Variant type.
+ * Declares the Variant type
  * @copyright Copyright (c) 2014 Yasser Asmi; Released under the MIT
  *            License (http://opensource.org/licenses/MIT)
  */
@@ -12,53 +12,40 @@
 #include "arr.h"
 #include "str.h"
 #include <math.h>
+
+#define VNULL Variant::sNull
+#define VEMPTY Variant::sEmpty
+
+#if __cplusplus > 199711L
 #include <initializer_list>
+#endif
 
-/**
- * The null Variant.
- */
-#define VNULL Variant::vNull
-
-/**
- * The empty Variant.
- */
-#define VEMPTY Variant::vEmpty
-
-/**
- * The JSON path deliminator.
- */
 #define VAR_PATH_DELIM     "."
 
 namespace jvar
 {
 
-/** \cond INTERNAL */
+class Variant;
+class VarFuncObj;
 
-/**
- * Implementation of a value for Variant.
- */
-class VarSuppImpl : public InterfaceImpl
+/** \cond INTERNAL */
+class VarExtInterface : public jvar::BaseInterface
 {
 public:
-    VarSuppImpl() :
-        mSupp(NULL)
-    {
-    }
-    virtual ~VarSuppImpl()
-    {
-    }
-    virtual InterfaceImpl* newImpl()
-    {
-        return (InterfaceImpl*) (new VarSuppImpl());
-    }
+    INTF_NAME("VarExtInterface");
+    INTF_CAST(
+        IID(BaseInterface)
+        IID(VarExtInterface)
+        );
 
-public:
-    FixedStr<24> mClassName; ///< Class name (unused?)
-    void* mSupp; ///< The actual data.
+    virtual void onAppend(Variant& arr, Variant& newelem);
+    virtual bool onNewExt(Variant& destobj, Variant& param);
+    virtual bool onSaveExt(Variant& sobj);
+    virtual bool onLoadExt(Variant& destobj, Variant& param);
+    virtual Variant* onAddMissingKey(Variant& destobj, const char* key);
+
 };
 /** \endcond */
-
-class VarFuncObj;
 
 /**
  * Variant class is inspired by Javascript's Var semantics.  It  maintains data of different kinds such
@@ -68,14 +55,8 @@ class VarFuncObj;
 class Variant
 {
 public:
-    /**
-     * Comparison callback
-     */
     typedef int (*Compare)(const Variant*, const Variant*);
 
-    /**
-     * The type of the Variant.
-     */
     enum Type
     {
         V_EMPTY,  ///< The Variant is empty.
@@ -95,7 +76,7 @@ public:
     /**
      * Default constructor-- an Empty object
      */
-    inline Variant()
+    Variant()
     {
         mData.type = V_EMPTY;
         mData.flags = 0;
@@ -104,7 +85,7 @@ public:
     /**
      * Constructs an Integer object with a longint
      */
-    inline Variant(longint i)
+    Variant(longint i)
     {
         mData.type = V_INT;
         mData.intData = i;
@@ -113,34 +94,25 @@ public:
     /**
      * Constructs an Integer object with an int
      */
-    inline Variant(int i)
+    Variant(int i)
     {
         mData.type = V_INT;
         mData.intData = (longint)i;
     }
 
     /**
-     * Constructs a double object
+     * Constructs an double object
      */
-    inline Variant(double d)
+    Variant(double d)
     {
         mData.type = V_DOUBLE;
         mData.dblData = d;
     }
 
     /**
-     * Constructs a boolean object
+     * Constructs an string object using a std::string
      */
-    inline Variant(bool b)
-    {
-      mData.type = V_BOOL;
-      mData.boolData = b;
-    }
-
-    /**
-     * Constructs a string object using a std::string
-     */
-    inline Variant(std::string s)
+    Variant(std::string s)
     {
         mData.type = V_STRING;
 
@@ -151,9 +123,9 @@ public:
     }
 
     /**
-     * Constructs a string object
+     * Constructs an string object
      */
-    inline Variant(const char* s)
+    Variant(const char* s)
     {
         mData.type = V_STRING;
 
@@ -166,16 +138,29 @@ public:
     /**
      * Copy constructor
      */
-    inline Variant(Variant const& src)
+    Variant(Variant const& src)
     {
         mData.type = V_EMPTY;
         *this = src;
     }
 
+#if __cplusplus > 199711L
+
     /**
-     * Destructor - deletes all data in the object
+     * Assigns an object literal represented by initializer_list
      */
-    inline ~Variant()
+    Variant(std::initializer_list<const Variant>&& src)
+    {
+        assignObj(src);
+    }
+
+#endif
+
+
+    /**
+     * Destructor deletes all data in the object
+     */
+    ~Variant()
     {
         (void)deleteData();
     }
@@ -389,11 +374,19 @@ public:
     {
         return makeInt();
     }
+    inline operator const longint()
+    {
+        return toInt();
+    }
 
     /**
      * Typecast the value as an double
      */
     inline operator double() const
+    {
+        return makeDbl();
+    }
+    inline operator const double() const
     {
         return makeDbl();
     }
@@ -407,7 +400,9 @@ public:
     }
 
     /**
-     * Returns a pointer to the string.  Returns NULL if not string type.
+     * Returns a pointer to the string.
+     *
+     * NOTE: Returns NULL if not string type.
      */
     inline operator const char*()
     {
@@ -415,7 +410,19 @@ public:
     }
 
     /**
-     * Returns a pointer to the string.  Returns NULL if not string type.
+     * Type cast to a copy of a string
+     *
+     * @return [description]
+     */
+    operator const std::string() const
+    {
+        return toString();
+    }
+
+    /**
+     * Returns a pointer to the string.
+     *
+     * NOTE:Returns NULL if not string type.
      */
     inline const char* c_str() const
     {
@@ -446,6 +453,14 @@ public:
     std::string toString() const;
 
     /**
+     * Returns a *copy* of the string performing any conversions --similar to String().
+     * However, an empty string ("") is returned for NULL and EMPTY.
+     *
+     * @return Copy of the string
+     */
+    std::string toStrE() const;
+
+    /**
      * Returns as a formatted string for a double, otherwise returns a copy of string
      * performing any conversions
      *
@@ -461,6 +476,7 @@ public:
      * @return String with Json
      */
     std::string toJsonString() const;
+    void makeJson(StrBld& sb) const;
 
     /**
      * Parses json text and loads the data structure into the variant
@@ -471,14 +487,7 @@ public:
      */
     bool parseJson(const char* jsontxt);
 
-    /**
-     * Parses json text and loads the data structure into the variant
-     *
-     * @param  jsontxt Json text string
-     *
-     * @return         Success
-     */
-    inline bool parseJson(std::string jsontxt) { return parseJson(jsontxt.c_str()); }
+    bool eq(const char* str);
 
     /**
      * Formats a new string using printf style formatting and assigns it to the variant
@@ -503,48 +512,47 @@ public:
     const char* typeName() const;
 
     /**
-     * Returns true if the stored object is null.
+     * Returns true if the object is empty or null.  It is prefered way
+     * to check that the variant doesn't have data.
+     */
+    bool empty() const
+    {
+        return (mData.type == V_NULL) || (mData.type == V_EMPTY);
+    }
+
+    /**
+     * (Deprecated) Returns true if the type is V_NULL. Please use empty() instead
+     * of this function as there are cases where a Variant may be V_EMPTY even
+     * though it is being set to V_NULL.
      */
     inline bool isNull() const
     {
         return (mData.type == V_NULL);
     }
-
     /**
-     * Returns true if the stored object is empty.
+     * (Deprecated) Returns true if the type is V_EMPTY. Please use empty() instead
+     * of this function.
      */
     inline bool isEmpty() const
     {
         return (mData.type == V_EMPTY);
     }
-
-    /**
-     * Returns true if the stored object is a JSON object.
-     */
     inline bool isObject() const
     {
         return (mData.type == V_OBJECT);
     }
-
-    /**
-     * Returns true if the stored object is a JSON array.
-     */
     inline bool isArray() const
     {
         return (mData.type == V_ARRAY);
     }
-
-    /**
-     * Returns true if the stored object is a pointer.
-     */
     inline bool isPointer() const
     {
         return (mData.type == V_POINTER);
     }
-
-    /**
-     * Returns true if the stored object is a double set to NaN.
-     */
+    inline bool isString() const
+    {
+        return (mData.type == V_STRING);
+    }
     inline bool isNaN()
     {
         if (mData.type == V_DOUBLE)
@@ -565,56 +573,65 @@ public:
     int length() const;
 
     /**
-     * Returns a referene to the variant in an array
+     * Returns a reference to the variant in an array
      */
     Variant& operator[](int i);
 
     /**
-     * Returns a const referene to the variant in an array
+     * Returns a const reference to the variant in an array
      */
     const Variant& operator[](int i) const;
 
     /**
-     * Returns a referene to the variant inside an object or a fuction using key
+     * Returns a reference to the variant inside an object or a function using key
      */
     Variant& operator[](const char* key);
 
+    Variant& operator[](const std::string& key)
+    {
+        return this->operator[](key.c_str());
+    }
+
     /**
-     * Returns a const referene to the variant inside an object or a fuction using key
+     * Returns a const reference to the variant inside an object or a function using key
      */
     const Variant& operator[](const char* key) const;
 
-    /**
-     * Returns a reference to the variant inside an object or a fuction using key
-     */
-    Variant& operator[](const std::string key);
+    const Variant& operator[](const std::string& key) const
+    {
+        return this->operator[](key.c_str());
+    }
 
     /**
-     * Returns a const reference to the variant inside an object or a fuction using key
-     */
-    const Variant& operator[](const std::string key) const;
-
-    /**
-     * Returns a refernece to a variant by parsing properties and indexes using a path
-     * syntax (ex: "obj.propA.2.name")
+     * Returns a reference to a variant by parsing properties and indexes using a path
+     * syntax with '.' separator (ex: "obj.propA.2.name")
      *
-     * @param  pathkey [description]
+     * @param  pathkey property names separated by '.'
      *
-     * @return         [description]
+     * @return         Reference to the element
      */
     Variant& path(const char* pathkey);
 
-    /**
-     * Returns a refernece to a variant by parsing properties and indexes using a path
-     * syntax (ex: "obj.propA.2.name")
-     *
-     * @param  pathkey [description]
-     *
-     * @return         [description]
-     */
     inline Variant& path(const std::string& pathkey)
     {
         return path(pathkey.c_str());
+    }
+
+    Variant& p(const char* pathkey)
+    {
+        return path(pathkey);
+    }
+    /**
+     * Returns a string value for the variant by parsing properties and indexes using a path
+     * syntax with '.' separator (ex: "obj.propA.2.name")
+     *
+     * @param  pathkey property names separated by '.'
+     *
+     * @return         String value of the element
+     */
+    std::string ps(const char* pathkey)
+    {
+        return path(pathkey).toStrE();
     }
 
     /**
@@ -632,6 +649,12 @@ public:
      * @return      Pointer to the newly added variant
      */
     Variant* append(const Variant& elem = VEMPTY);
+
+    Variant& appendr()
+    {
+        Variant* v = append();
+        return (v != NULL) ? *v : Variant::sNull;
+    }
 
     /**
      * Adds an variant at the end of an array
@@ -662,6 +685,28 @@ public:
      */
     void sort(Compare comp);
 
+    int indexOf(const char* str);
+    int indexOf(const std::string s)
+    {
+        return indexOf(s.c_str());
+    }
+    int lastIndexOf(const char* str);
+    int lastIndexOf(const std::string s)
+    {
+        return lastIndexOf(s.c_str());
+    }
+
+    /**
+     * Splits a string separated a separators and returns the substrings in the array
+     * Whitespace is ignored unless inside quotes
+     * Separator cannot be whitespace
+     * Separator is ignored if inside quotes
+     *
+     * @param str String to split
+     * @param sep Separator
+     */
+    void split(const char* str, const char* sep);
+
     /**
      * Creates an objects with optional initial value
      *
@@ -677,7 +722,20 @@ public:
      *
      * @return       Reference to the value in object
      */
-    Variant& addProperty(const char* key, const Variant& value = vEmpty);
+    Variant& addProperty(const char* key, const Variant& value = VEMPTY);
+    Variant& addProperty(const std::string key, const Variant& value = VEMPTY)
+    {
+        return addProperty(key.c_str(), value);
+    }
+
+    /**
+     * Adds or modifies (if already exists) property to the object
+     *
+     * @param  key   Key name for the property
+     *
+     * @return       Reference to the value in object
+     */
+    Variant& addOrModifyProperty(const char* key);
 
     /**
      * Determines if the object has a property
@@ -714,15 +772,16 @@ public:
     void createFunction(Variant (*func)(Variant& env, Variant& arg));
 
     /**
-     * Adds a variable to the enviroment of the function object
+     * Adds a variable to the environment of the function object
      *
      * @param  varname Key name for the variable
      * @param  value   Optional value for the variable
      *
      * @return         Success
      */
-    bool addEnv(const char* varname, const Variant& value = vEmpty);
+    bool addEnv(const char* varname, const Variant& value = VEMPTY);
 
+#if __cplusplus > 199711L
     /**
      * Executes the function object with any number of parameters.
      *
@@ -734,30 +793,12 @@ public:
      * be used as shorthand if only four arguments are needed.
      */
     Variant operator() (std::initializer_list<const jvar::Variant>&& values);
+#endif
 
-    /**
-     * Executes the function object with no parameters.
-     */
-    Variant operator() ();
-
-    /**
-     * Executes the function object with one parameter.
-     */
+	Variant operator() ();
     Variant operator() (const Variant& value1);
-
-    /**
-     * Executes the function object with two parameters.
-     */
     Variant operator() (const Variant& value1, const Variant& value2);
-
-    /**
-     * Executes the function object with three parameters.
-     */
     Variant operator() (const Variant& value1, const Variant& value2, const Variant& value3);
-
-    /**
-     * Executes the function object with four parameters.
-     */
     Variant operator() (const Variant& value1, const Variant& value2, const Variant& value3, const Variant& value4);
 
     /**
@@ -812,23 +853,57 @@ public:
         return isFlagSet(mData.flags, VF_MODIFIED);
     }
 
-/** \cond INTERNAL */
     /**
-     * Set the data in the value implementation.
+     * Make property lookup for object, case insensitive.
      */
-    void setSuppImplData(const char* name, void* supp);
+    inline void makeCI()
+    {
+        if (mData.type == V_OBJECT)
+        {
+            mData.objectData->makeCI();
+        }
+    }
 
     /**
-     * Get the data from the value implementation.
+     * Instruct the object to automatically add a property if missing (like JS)
      */
-    void getSuppImplData(const char** name, void** supp);
+    inline void enableAutoAdd()
+    {
+        if (mData.type == V_OBJECT)
+        {
+            setFlag(mData.flags, VF_AUTOADDPROP);
+        }
+    }
+
+    /**
+     * Don't report an error if a property is missing
+     */
+    inline void disableMissingErr()
+    {
+        setFlag(mData.flags, VF_NOMISSINGKEYERR);
+    }
+
+    bool readJsonFile(const char* filename);
+    inline bool readJsonFile(const std::string& filename)
+    {
+        return readJsonFile(filename.c_str());
+    }
+
+    void newFrom(Variant param);
+    void save();
+    void load(Variant param);
+
+/** \cond INTERNAL */
+    jvar::RcLife<jvar::BaseInterface>& extInterface();
 /** \endcond */
 
 private:
 
     enum Flags
     {
-        VF_MODIFIED = 0x1
+        VF_MODIFIED = 0x1,
+        VF_NOMISSINGKEYERR = 0x2,
+        VF_AUTOADDPROP = 0x4
     };
 
     #pragma pack(push, 4)
@@ -850,6 +925,7 @@ private:
 
         std::string* strData() const
         {
+            assert(type == V_STRING);
             return (std::string*)&strMemData;
         }
     };
@@ -894,6 +970,15 @@ private:
      */
     void assignStr(const std::string& src);
 
+#if __cplusplus > 199711L
+
+    /**
+     * Assign an object defined by initializer list to this Variant.
+     */
+    void assignObj(std::initializer_list<const Variant>& src);
+
+#endif
+
     /**
      * Coerce the data in this Variant to a \ref longint.
      */
@@ -912,60 +997,49 @@ private:
     {
         return makeInt() == 0 ? false : true;
     }
-
-    /**
+	/**
      * Coerce the data in this Variant to a C++ string.
      * @param[out] s the string to fill.
      */
-    void makeString(std::string& s, int level, bool json);
-
-    /**
+    void makeString(StrBld& s, int level, bool json);
+	/**
      * Escape special characters in \p s.
      */
-    void jsonifyStr(std::string& s);
+    void jsonifyStr(StrBld& s);
 
-    /**
-     * Append a double quote (<code>"</quote>) to \p s if type is V_STRING.
-     */
-    inline void appendQuote(std::string& s, Type type)
+    inline void appendQuote(StrBld& s, Type type)
     {
         if (type == V_STRING)
         {
-            s += '"';
+            s.append('"');
         }
     }
-
-    /**
+	 /**
      * JSON formatting helper (adds newlines and indentation).
      */
-    inline void appendNewline(std::string& s, int level, bool json)
+    inline void appendNewline(StrBld& s, int level, bool json)
     {
         if (json)
         {
-            s += '\n';
-            s += std::string(level, '\t');
+            s.append('\n');
+            //s.append(std::string(level, '\t'));
+            for (int i = 0; i < level; i++)
+            {
+                s.append('\t');
+            }
         }
     }
+
+    Variant* handleMissingKey(const char* key);
 
     static const KeywordArray::Entry sTypeNames[];
 
 public:
-    /**
-     * The empty Variant.
-     */
-    static Variant vEmpty;
-
-    /**
-     * The null Variant.
-     */
-    static Variant vNull;
-
-public:
 /** \cond INTERNAL */
+    static Variant sEmpty;
+    static Variant sNull;
+    static jvar::RcLife<jvar::BaseInterface> sNullExtIntf;
 
-    /**
-     * Construct a Variant of the given \p type.
-     */
     Variant(Type type)
     {
         mData.type = type;
@@ -1104,6 +1178,29 @@ inline Variant operator+(double lhs, const Variant& rhs)
     return res;
 }
 
+
+/**
+ * Global operator to compare a variant and string
+ */
+inline bool operator==(const Variant& lhs, const std::string& rhs)
+{
+    return lhs.toString() == rhs;
+}
+inline bool operator!=(const Variant& lhs, const std::string& rhs) { return !(lhs == rhs); }
+
+/**
+ * Global operator to compare a variant and const char *
+ */
+inline bool operator==(const Variant& lhs, const char *rhs)
+{
+    return strcmp(lhs.toString().c_str(), rhs) == 0;
+}
+inline bool operator!=(const Variant& lhs, const char *rhs) { return !(lhs == rhs); }
+
+
+
 } // jvar
+
+
 
 #endif // _VAR_H

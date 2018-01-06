@@ -3,8 +3,17 @@
 
 #include "util.h"
 
+#ifdef __APPLE__
+#include <sys/timeb.h>
+#endif
+
 namespace jvar
 {
+
+void printeno(int eno, const char* func)
+{
+    printf("Error: '%s(%d)' %s \n", strerror(eno), eno, func == NULL ? "" : func);
+}
 
 #ifdef _DEBUG
 
@@ -16,7 +25,7 @@ void dbghex(const char* label, const void* ptr, int len)
 
     if (label)
     {
-        dbglog("%s hexdump %p %d byte(s):\n", label, ptr, len);
+        dbglog("%s hexdump %p %x(%d) byte(s):\n", label, ptr, len, len);
     }
 
     for (int i = 0; i < len; i += 16)
@@ -48,6 +57,11 @@ void dbghex(const char* label, const void* ptr, int len)
 
 ulongint getTickCount()
 {
+#ifdef __APPLE__
+    timeb tb;
+    ftime(&tb);		    
+    return tb.millitm + (tb.time & 0xfffff) * 1000;
+#else
     struct timespec ts;
 
     if (clock_gettime(CLOCK_MONOTONIC, &ts))
@@ -56,9 +70,41 @@ ulongint getTickCount()
     }
 
     return (ts.tv_sec * 1000) + ts.tv_nsec / 1000000L;
+#endif
 }
 
-// Buffer
+void tsAddMsecs(struct timespec* ts, longint millisecs)
+{
+    int sec = millisecs / 1000;
+
+    millisecs -= sec * 1000;
+    ts->tv_nsec += millisecs * 1000000;
+
+    ts->tv_sec += ts->tv_nsec / 1000000000 + sec;
+    ts->tv_nsec = ts->tv_nsec % 1000000000;
+}
+
+int random(int max)
+{
+    // Not thread-safe
+    static bool seeded = false;
+    if (!seeded)
+    {
+        srand (time(NULL));
+        seeded = true;
+    }
+    return rand() % max;
+}
+
+std::string nowStr(const char* fmt /* = NULL */)
+{
+    Date t;
+    t.now();
+    return t.toString(fmt);
+}
+
+
+// Buffer::
 
 void Buffer::alloc(size_t size)
 {
@@ -66,7 +112,7 @@ void Buffer::alloc(size_t size)
     mMemory = ::malloc(size);
     if (mMemory == NULL)
     {
-        dbgerr("failed to allocate %lu bytes\n", static_cast<long unsigned int>(size));
+        dbgerr("failed to allocate %lu bytes\n", size);
         return;
     }
     mSize = size;
@@ -82,12 +128,31 @@ void Buffer::reAlloc(size_t size)
     void* p = ::realloc(mMemory, size);
     if (p == NULL)
     {
-        dbgerr("failed to allocate %lu bytes\n", static_cast<long unsigned int>(size));
+        dbgerr("failed to allocate %lu bytes\n", size);
         return;
     }
 
     mMemory = p;
     mSize = size;
+}
+
+void Buffer::dblOr(size_t neededsize)
+{
+    size_t newsize = mSize;
+
+    if (newsize == 0)
+    {
+        newsize = 64;
+    }
+    else
+    {
+        newsize *= 2;
+    }
+    if (newsize < neededsize)
+    {
+        newsize = neededsize;
+    }
+    reAlloc(newsize);
 }
 
 void Buffer::free()
@@ -100,11 +165,16 @@ void Buffer::free()
     }
 }
 
-
 void Buffer::copyFrom(Buffer& src)
 {
     reAlloc(src.size());
     memcpy(ptr(), src.ptr(), src.size());
+}
+
+void Buffer::copyFrom(const Buffer& src)
+{
+    reAlloc(src.size());
+    memcpy(ptr(), src.cptr(), src.size());
 }
 
 void Buffer::moveFrom(Buffer& src)
@@ -115,7 +185,6 @@ void Buffer::moveFrom(Buffer& src)
     src.mMemory = NULL;
     src.mSize = 0;
 }
-
 
 bool Buffer::readFile(const char* filename, bool nullterm)
 {
@@ -151,7 +220,7 @@ bool Buffer::readFile(const char* filename, bool nullterm)
     {
         // Failed to read, free the buffer.
         free();
-        dbgerr("Failed to read file %s into buffer\n", filename);
+        dbgerr("Failed to read file '%s' into buffer\n", filename);
     }
 
     return ret;

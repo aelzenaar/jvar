@@ -43,10 +43,11 @@ Variant makeConverter(Variant tounit, Variant factor, Variant offset = VNULL)
 // variadic, like printf, but is semi-type-safe.
 Variant print(Variant& env, Variant& arg)
 {
-    for(size_t i = 0; i < arg.length(); ++i)
+    for (size_t i = 0; i < (size_t)arg.length(); ++i)
     {
         std::cout << arg[i].toString() << " ";
     }
+    return VEMPTY;
 }
 
 
@@ -76,6 +77,8 @@ int main(int argc, char** argv)
     // poundsToKg(2.5) = 1.14 kg
     // farenheitToCelsius(98l) = 36.67 degrees-c
 
+// C++11 code ONLY
+#if __cplusplus > 199711L
     Variant printer;
     printer.createFunction(print);
 
@@ -84,4 +87,5 @@ int main(int argc, char** argv)
 
     // Printed:
     // test 2.0 3 4 five six
+#endif
 }

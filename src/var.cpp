@@ -1,16 +1,21 @@
-// Copyright (c) 2014 Yasser Asmi
+// Copyright (c) 2014-2015 Yasser Asmi
 // Released under the MIT License (http://opensource.org/licenses/MIT)
 
 #include "var.h"
 #include "json.h"
 
+#if __cplusplus > 199711L
 #include <initializer_list>
+#endif
 
 namespace jvar
 {
 
-Variant Variant::vEmpty;
-Variant Variant::vNull(Variant::V_NULL);
+// Static variables
+
+Variant Variant::sEmpty;
+Variant Variant::sNull(Variant::V_NULL);
+RcLife<BaseInterface> Variant::sNullExtIntf;
 
 const KeywordArray::Entry Variant::sTypeNames[] =
 {
@@ -33,10 +38,19 @@ bool Variant::parseJson(const char* jsontxt)
     {
         return false;
     }
-
     JsonParser json(*this, jsontxt);
+    bool err = json.failed();
+    if (err)
+    {
+        clear();
+    }
     setModified();
-    return !json.failed();
+    return !err;
+}
+
+bool Variant::eq(const char* s)
+{
+    return equal(toString().c_str(), s);
 }
 
 
@@ -151,14 +165,14 @@ double Variant::makeDbl() const
 }
 
 
-void Variant::makeString(std::string& s, int level, bool json)
+void Variant::makeString(StrBld& s, int level, bool json)
 {
     switch (mData.type)
     {
         case V_STRING:
         {
-            //TODO: use json flag
-            s = *(mData.strData());
+            s.clear();
+            s.append( *(mData.strData()) );
 
             if (json)
             {
@@ -169,70 +183,76 @@ void Variant::makeString(std::string& s, int level, bool json)
 
         case V_INT:
         {
-            jvar::format(s, "%ld", mData.intData);
+            s.clear();
+            s.appendFmt("%ld", mData.intData);
         }
         break;
 
         case V_DOUBLE:
         {
-            jvar::format(s, "%lg", mData.dblData);
-            if (s.find_first_of('.') == std::string::npos)
-            {
-                s += ".0";
-            }
+            //TODO: Verify it is ok not to do the following
+            // if (tmp.find_first_of('.') == std::string::npos)
+            // {
+            //     tmp += ".0";
+            // }
+            s.clear();
+            s.appendFmt("%lg", mData.dblData);
         }
         break;
 
         case V_BOOL:
         {
-            s = mData.boolData ? "true" : "false";
+            s.clear();
+            s.append(mData.boolData ? "true" : "false");
         }
         break;
 
         case V_EMPTY:
         {
             //TODO: Revisit this value--should work for json
-            s = "null";
+            s.clear();
+            s.append("null");
         }
         break;
 
         case V_NULL:
         {
-            s = "null";
+            s.clear();
+            s.append("null");
         }
         break;
 
         case V_ARRAY:
         {
-            s += '[';
+            s.append('[');
             level++;
             for (Iter<Variant> i; forEach(i); )
             {
                 if (i.pos() != 0)
                 {
-                    s += ",";
+                    s.append(',');
                 }
 
                 appendNewline(s, level, json);
 
                 appendQuote(s, i->type());
 
-                std::string tmps;
+                StrBld tmps;
                 i->makeString(tmps, level, json);
 
-                s += tmps;
+                s.append(tmps);
                 appendQuote(s, i->type());
 
             }
             level--;
             appendNewline(s, level, json);
-            s += ']';
+            s.append(']');
         }
         break;
 
         case V_OBJECT:
         {
-            s += '{';
+            s.append('{');
 
             level++;
             for (Iter<Variant> i; mData.objectData->forEach(i); )
@@ -240,7 +260,7 @@ void Variant::makeString(std::string& s, int level, bool json)
 
                 if (i.pos() != 0)
                 {
-                    s += ",";
+                    s.append(",");
                 }
 
                 appendNewline(s, level, json);
@@ -249,36 +269,37 @@ void Variant::makeString(std::string& s, int level, bool json)
 
                 if (json)
                 {
-                    std::string keys = i.key();
+                    StrBld keys(i.key());
                     jsonifyStr(keys);
-                    s += keys;
+                    s.append(keys);
                 }
                 else
                 {
-                    s += i.key();
+                    s.append(i.key());
                 }
                 appendQuote(s, V_STRING);
 
-                s += ':';
+                s.append(':');
 
                 appendQuote(s, i->type());
 
-                std::string tmps;
+                StrBld tmps;
                 i->makeString(tmps, level, json);
 
-                s += tmps;
+                s.append(tmps);
                 appendQuote(s, i->type());
 
             }
             level--;
             appendNewline(s, level, json);
-            s += '}';
+            s.append('}');
         }
         break;
 
         case V_FUNCTION:
         {
-            s = "(function)";
+            s.clear();
+            s.append("(function)");
         }
         break;
 
@@ -300,11 +321,9 @@ void Variant::makeString(std::string& s, int level, bool json)
 }
 
 
-void Variant::jsonifyStr(std::string& s)
+void Variant::jsonifyStr(StrBld& s)
 {
-    std::string ts;
-
-    //dbglog("jsonify: %s\n", s.c_str());
+    StrBld ts(s.length());
 
     // First check if the string needs any esc chars
 
@@ -337,9 +356,7 @@ void Variant::jsonifyStr(std::string& s)
             int lused = 0;
             c = makeUnicode(&p[i], (int)s.length() - i, &lused);
 
-            std::string hex;
-            jvar::format(hex, "\\u%04X", c);
-            ts += hex;
+            ts.appendFmt("\\u%04X", c);
 
             i += lused - 1;
         }
@@ -352,19 +369,19 @@ void Variant::jsonifyStr(std::string& s)
             if (c != '/' && strfind(ESCAPE_CHARS, c, &pos))
             {
                 c = ESCAPE_CODES[pos];
-                ts += '\\';
-                ts += c;
+                ts.append('\\');
+                ts.append(c);
             }
             else
             {
-                ts += (char)c;
+                ts.append((char)c);
             }
         }
     }
 
     // Return the string
 
-    ts.swap(s);
+    s.moveFrom(ts);
 }
 
 void Variant::createArray(const char* initvalue /*= 0*/)
@@ -395,10 +412,20 @@ Variant* Variant::append(const Variant& elem)
     }
 
     Variant* newelem = mData.arrayData->append();
+
     if (elem.type() != V_EMPTY)
     {
         newelem->copyFrom(&elem);
     }
+    else
+    {
+        VarExtInterface* intf = cast<VarExtInterface>(extInterface().ptr());
+        if (intf != NULL)
+        {
+            intf->onAppend(*this, *newelem);
+        }
+    }
+
     setModified();
 
     return newelem;
@@ -456,6 +483,48 @@ void Variant::sort(Compare comp)
 }
 
 
+int Variant::indexOf(const char* str)
+{
+    if (mData.type == V_STRING)
+    {
+        size_t pos = s().find(str);
+        return (pos != std::string::npos ? (int)pos : -1);
+    }
+    else if (mData.type == V_ARRAY)
+    {
+        for (Iter<Variant> i; forEach(i); )
+        {
+            if (i->eq(str))
+            {
+                return i.pos();
+            }
+        }
+    }
+    return -1;
+}
+
+int Variant::lastIndexOf(const char* str)
+{
+   if (mData.type != V_STRING)
+   {
+       return -1;
+   }
+   size_t pos = s().rfind(str);
+   return (pos != std::string::npos ? (int)pos : -1);
+}
+
+void Variant::split(const char* str, const char* sep)
+{
+    // Splitter doesn't work if sep is just whitespace--whitespace is ignored
+    Splitter splt(str, sep);
+
+    createArray();
+    while (!splt.eof())
+    {
+        append(splt.get());
+    }
+}
+
 void Variant::createObject(const char* initvalue /* = NULL*/)
 {
     if (deleteData())
@@ -469,6 +538,11 @@ void Variant::createObject(const char* initvalue /* = NULL*/)
         {
             JsonParser json(*this, initvalue, JsonParser::FLAG_FLEXQUOTES | JsonParser::FLAG_OBJECTONLY);
         }
+
+#ifdef AUTOADDPROP
+        mData.flags |= Variant::VF_AUTOADDPROP;
+#endif
+
     }
     else
     {
@@ -477,13 +551,13 @@ void Variant::createObject(const char* initvalue /* = NULL*/)
 }
 
 
-Variant& Variant::addProperty(const char* key, const Variant& value /* = vEmpty */)
+Variant& Variant::addProperty(const char* key, const Variant& value /* = VEMPTY */)
 {
     assert(key);
 
     if (mData.type != V_OBJECT)
     {
-        dbgerr("addProperty(%s) failed -- not an object\n", key);
+        dbglog("addProperty(%s) failed -- not an object\n", key);
         return VNULL;
     }
 
@@ -498,6 +572,29 @@ Variant& Variant::addProperty(const char* key, const Variant& value /* = vEmpty 
     if (value.type() != V_EMPTY)
     {
         newprop->copyFrom(&value);
+    }
+
+    setModified();
+
+    return *newprop;
+}
+
+
+Variant& Variant::addOrModifyProperty(const char* key)
+{
+    assert(key);
+
+    if (mData.type != V_OBJECT)
+    {
+        dbglog("addOrModifyProperty(%s) failed -- not an object\n", key);
+        return VNULL;
+    }
+
+    Variant* newprop = mData.objectData->addOrModify(key);
+    if (!newprop)
+    {
+        dbglog("addOrModifyProperty(%s) failed\n", key);
+        return VNULL;
     }
 
     setModified();
@@ -545,6 +642,37 @@ bool Variant::hasProperty(const char* key)
     return false;
 }
 
+Variant* Variant::handleMissingKey(const char* key)
+{
+    Variant* v = NULL;
+
+    // Call the ext interface if found to see if it has the required value.
+
+    VarExtInterface* intf = cast<VarExtInterface>(extInterface().ptr());
+    if (intf != NULL)
+    {
+        v = intf->onAddMissingKey(*this, key);
+    }
+
+    // If still missing key and we are allowed to add automatically, add the key
+
+    if (v == NULL && isFlagSet(mData.flags, Variant::VF_AUTOADDPROP))
+    {
+        v = &(addProperty(key));
+    }
+
+    // If still missing key and error reporting is not disabled, log the error
+
+    if (v == NULL && isFlagClear(mData.flags, VF_NOMISSINGKEYERR))
+    {
+        dbglog("[%s] not found\n", key);
+    }
+
+    // Return the pointer to the added or null
+
+    return v;
+}
+
 Variant& Variant::operator[](const char* key)
 {
     assert(key);
@@ -558,18 +686,22 @@ Variant& Variant::operator[](const char* key)
         }
         else
         {
-            dbgerr("[%s] not found, %p\n", key, (void*)this);
+            v = handleMissingKey(key);
+            if (v)
+            {
+                return *v;
+            }
         }
     }
     else if (mData.type == V_FUNCTION)
     {
         return mData.funcData->mEnv[key];
     }
-    else
+    else if (mData.type != V_NULL && mData.type != V_EMPTY)
     {
-        dbgerr("[%s] failed--not an object or func\n", key);
+        dbglog("[%s] failed--not an object or func\n", key);
     }
-    return vNull;
+    return VNULL;
 }
 
 
@@ -586,35 +718,29 @@ const Variant& Variant::operator[](const char* key) const
         }
         else
         {
-            dbgerr("[%s] not found\n", key);
+            v = const_cast<Variant*>(this)->handleMissingKey(key);
+            if (v)
+            {
+                return *v;
+            }
         }
     }
     else if (mData.type == V_FUNCTION)
     {
         return mData.funcData->mEnv[key];
     }
-    else
+    else if (mData.type != V_NULL && mData.type != V_EMPTY)
     {
-        dbgerr("[%s] failed--not an object or func\n", key);
+        dbglog("[%s] failed--not an object or func\n", key);
     }
-    return vNull;
-}
-
-Variant& Variant::operator[](const std::string key)
-{
-  return (*this)[key.c_str()];
-}
-
-const Variant& Variant::operator[](const std::string key) const
-{
-  return (*this)[key.c_str()];
+    return VNULL;
 }
 
 Variant& Variant::path(const char* pathkey)
 {
     assert(pathkey);
 
-    //dbgtrc("path: '%s'\n", pathkey);
+    //dbglog("path: %p ['%s']\n", this, pathkey);
     Variant* v = this;
 
     if (pathkey[0] != '\0')
@@ -627,20 +753,21 @@ Variant& Variant::path(const char* pathkey)
                 if (v->isArray())
                 {
                     bool valid;
-                    int n = str2int(p.token(), &valid);
+                    int n = str2int(p.token().toString(), &valid);
                     if (valid)
                     {
                         v = &((*v)[n]);
                     }
                     else
                     {
-                        v = &vNull;
+                        v = &sNull;
                     }
                 }
                 else
                 {
                     v = &((*v)[p.token().c_str()]);
                 }
+                //dbglog("  %s = %p\n", p.token().c_str(), v);
             }
             p.advance();
         }
@@ -686,11 +813,11 @@ Variant& Variant::operator[](int i)
             return *v;
         }
     }
-    else
+    else if (mData.type != V_NULL && mData.type != V_EMPTY)
     {
         dbgerr("[%d] failed--not an object or array\n", i);
     }
-    return vNull;
+    return VNULL;
 }
 
 const Variant& Variant::operator[](int i) const
@@ -711,11 +838,11 @@ const Variant& Variant::operator[](int i) const
             return *v;
         }
     }
-    else
+    else if (mData.type != V_NULL && mData.type != V_EMPTY)
     {
         dbgerr("[%d] failed--not an object or array\n", i);
     }
-    return vNull;
+    return VNULL;
 }
 
 
@@ -734,18 +861,22 @@ void Variant::createFunction(Variant (*func)(Variant& env, Variant& arg))
     }
 }
 
+/*
+ * Code requires C++11 to work - see below for backwards-compatible code.
+ */
+#if __cplusplus > 199711L
+
 Variant Variant::operator() (std::initializer_list<const jvar::Variant>&& values)
 {
     if (mData.type != V_FUNCTION) return VNULL;
 
     Variant arg;
-    Variant* p;
 
     arg.createArray();
 
-    for(const auto& value : values)
+    for (const auto& value : values)
     {
-      p = arg.append(value);
+        arg.append(value);
     }
 
     return mData.funcData->mFunc(mData.funcData->mEnv, arg);
@@ -778,7 +909,108 @@ Variant Variant::operator() (const Variant& value1, const Variant& value2, const
     return (*this)({value1, value2, value3, value4});
 }
 
-bool Variant::addEnv(const char* varname, const Variant& value /* = vEmpty */)
+/*
+ * Pre-C++11 code (does not require init lists)
+ */
+#else
+
+Variant Variant::operator() ()
+{
+    if (mData.type == V_FUNCTION)
+    {
+        Variant arg;
+
+        arg.createArray();
+
+        return mData.funcData->mFunc(mData.funcData->mEnv, arg);
+    }
+    return VNULL;
+}
+
+Variant Variant::operator() (const Variant& value1)
+{
+    if (mData.type == V_FUNCTION)
+    {
+        Variant arg;
+        Variant* p;
+
+        arg.createArray();
+
+        p = arg.append();
+        p->internalSetPtr(&value1);
+
+        return mData.funcData->mFunc(mData.funcData->mEnv, arg);
+    }
+    return VNULL;
+}
+
+Variant Variant::operator() (const Variant& value1, const Variant& value2)
+{
+    if (mData.type == V_FUNCTION)
+    {
+        Variant arg;
+        Variant* p;
+
+        arg.createArray();
+
+        p = arg.append();
+        p->internalSetPtr(&value1);
+        p = arg.append();
+        p->internalSetPtr(&value2);
+
+        return mData.funcData->mFunc(mData.funcData->mEnv, arg);
+    }
+    return VNULL;
+}
+
+Variant Variant::operator() (const Variant& value1, const Variant& value2, const Variant& value3)
+{
+    if (mData.type == V_FUNCTION)
+    {
+        Variant arg;
+        Variant* p;
+
+        arg.createArray();
+
+        p = arg.append();
+        p->internalSetPtr(&value1);
+        p = arg.append();
+        p->internalSetPtr(&value2);
+        p = arg.append();
+        p->internalSetPtr(&value3);
+
+        return mData.funcData->mFunc(mData.funcData->mEnv, arg);
+    }
+    return VNULL;
+}
+
+
+Variant Variant::operator() (const Variant& value1, const Variant& value2, const Variant& value3,
+    const Variant& value4)
+{
+    if (mData.type == V_FUNCTION)
+    {
+        Variant arg;
+        Variant* p;
+
+        arg.createArray();
+
+        p = arg.append();
+        p->internalSetPtr(&value1);
+        p = arg.append();
+        p->internalSetPtr(&value2);
+        p = arg.append();
+        p->internalSetPtr(&value3);
+        p = arg.append();
+        p->internalSetPtr(&value4);
+
+        return mData.funcData->mFunc(mData.funcData->mEnv, arg);
+    }
+    return VNULL;
+}
+#endif
+
+bool Variant::addEnv(const char* varname, const Variant& value /* = VEMPTY */)
 {
     if (mData.type != V_FUNCTION)
     {
@@ -813,25 +1045,30 @@ bool Variant::deleteData()
             std::string* strdata = mData.strData();
 
             // Call the string destructor on the inplace newed object.
-            strdata->std::string::~string();
+            using namespace std;
+	    strdata->std::string::~string();
+            //strdata->std::string::~basic_string();
         }
         break;
 
         case V_ARRAY:
         {
             delete mData.arrayData;
+            mData.arrayData = NULL;
         }
         break;
 
         case V_OBJECT:
         {
             delete mData.objectData;
+            mData.objectData = NULL;
         }
         break;
 
         case V_FUNCTION:
         {
             delete mData.funcData;
+            mData.funcData = NULL;
         }
         break;
 
@@ -886,7 +1123,7 @@ void Variant::copyFrom(const Variant* src)
 
             case V_ARRAY:
             {
-                // Create the array object using the copy constuctor.
+                // Create the array object using the copy constructor.
 
                 mData.arrayData = new ObjArray<Variant>(*(src->mData.arrayData));
             }
@@ -894,7 +1131,7 @@ void Variant::copyFrom(const Variant* src)
 
             case V_OBJECT:
             {
-                // Create the proparray object using the copy constuctor.
+                // Create the proparray object using the copy constructor.
 
                 mData.objectData = new PropArray<Variant>(*(src->mData.objectData));
             }
@@ -902,7 +1139,7 @@ void Variant::copyFrom(const Variant* src)
 
             case V_FUNCTION:
             {
-                // Create the function object using the copy constuctor.
+                // Create the function object using the copy constructor.
 
                 mData.funcData = new VarFuncObj(*(src->mData.funcData));
             }
@@ -919,7 +1156,10 @@ void Variant::copyFrom(const Variant* src)
             case V_EMPTY:
             case V_NULL:
             {
-                // do nothing.
+                // If a NULL or EMPTY is being copied, we set the data type of src to EMPTY.
+                // Setting it to NULL is not good because further assignments will fail.
+
+                mData.type = V_EMPTY;
             }
             break;
 
@@ -927,7 +1167,7 @@ void Variant::copyFrom(const Variant* src)
             {
                 dbgerr("TODO: copyfrom missing %d\n", src->mData.type);
 
-                assert(false);
+                //assert(false);
             }
         }
     }
@@ -1033,15 +1273,54 @@ void Variant::assignBool(bool src)
     }
 }
 
+#if __cplusplus > 199711L
+
+void Variant::assignObj(std::initializer_list<const Variant>& src)
+{
+    bool is_object = true;
+
+    if (src.size() == 0)
+    {
+        createObject();
+        return;
+    }
+
+    for(const auto& v : src)
+    {
+        if (!v.isArray() || v.length() != 2 || !v[0].isString())
+            is_object = false;
+    }
+
+    if (is_object)
+    {
+        createObject();
+        for(const auto& v : src)
+        {
+            addProperty(v[0].toString(), v[1]);
+        }
+    }
+    else
+    {
+        createArray();
+        for (const auto& v: src)
+        {
+            push(v);
+        }
+    }
+}
+
+#endif
+
 std::string& Variant::s()
 {
     if (mData.type != V_STRING)
     {
-        // Note: This fails if the current var is vNull
+        // Note: This fails if the current var is VNULL
 
         std::string s;
-        makeString(s, 0, false);
-        *this = s;
+        StrBld sb;
+        makeString(sb, 0, false);
+        *this = sb.toString();
         setModified();
     }
     return *(mData.strData());
@@ -1055,24 +1334,47 @@ std::string Variant::toString() const
     }
     else
     {
-        std::string s;
-        ((Variant*)this)->makeString(s, 0, false);
-        return s;
+        StrBld sb;
+        ((Variant*)this)->makeString(sb, 0, false);
+        return sb.toString();
     }
 }
 
+
+std::string Variant::toStrE() const
+{
+    if (mData.type == V_STRING)
+    {
+        return *(mData.strData());
+    }
+    else if (mData.type != V_NULL && mData.type != V_EMPTY)
+    {
+        StrBld sb;
+        ((Variant*)this)->makeString(sb, 0, false);
+        return sb.toString();
+    }
+    return std::string();
+}
+
+
 std::string Variant::toJsonString() const
 {
-    std::string s;
-    ((Variant*)this)->makeString(s, 0, true);
-    return s;
+    StrBld sb;
+    ((Variant*)this)->makeString(sb, 0, true);
+    return sb.toString();
 }
+
+void Variant::makeJson(StrBld& sb) const
+{
+    sb.clear();
+    ((Variant*)this)->makeString(sb, 0, true);
+}
+
 
 std::string Variant::toFixed(int digs /*= 0*/) const
 {
     if (mData.type == V_DOUBLE)
     {
-        //TODO: optimize
         std::string fmt;
         std::string s;
         jvar::format(fmt, "%%.%df", digs);
@@ -1113,12 +1415,24 @@ void Variant::internalAdd(const Variant& lhs, const Variant& rhs)
     else
     {
         // Types are different. If they are ints or double,
-        // result is double.  Otherwise, stringify both and concat
+        // result is double.  If the lhs type is NULL or empty, use lhs type.
+        // Otherwise, stringify both and concat
 
         if ((lhs.mData.type == V_INT || lhs.mData.type == V_DOUBLE) &&
             (rhs.mData.type == V_INT || rhs.mData.type == V_DOUBLE))
         {
             assignDbl(lhs.makeDbl() + rhs.makeDbl());
+        }
+        else if (lhs.empty() && (rhs.mData.type == V_INT || rhs.mData.type == V_DOUBLE))
+        {
+            if (rhs.mData.type == V_INT)
+            {
+                assignInt(lhs.makeInt() + rhs.mData.intData);
+            }
+            else
+            {
+                assignDbl(lhs.makeDbl() + rhs.mData.dblData);
+            }
         }
         else
         {
@@ -1145,58 +1459,107 @@ void Variant::internalSetPtr(const Variant* v)
     }
 }
 
-void Variant::setSuppImplData(const char* name, void* supp)
-{
-    VarSuppImpl* impl = NULL;
 
+bool Variant::readJsonFile(const char* filename)
+{
+    Buffer jsontxt;
+    if (!jsontxt.readFile(filename, true))
+    {
+        dbgerr("Failed to json read file: %s\n", filename);
+        return false;
+    }
+
+    JsonParser json(*this, (const char*)jsontxt.cptr());
+    if (json.failed())
+    {
+        dbgerr("Failed to parse json file\n");
+        clear();
+        return false;
+    }
+    return true;
+}
+
+RcLife<BaseInterface>& Variant::extInterface()
+{
     if (mData.type == V_OBJECT)
     {
-        impl = (VarSuppImpl*)mData.objectData->getSupportImpl();
-        if (impl == NULL)
-        {
-            impl = (VarSuppImpl*)mData.objectData->setSupportImpl(new VarSuppImpl());
-        }
+        return mData.objectData->extInterface();
     }
     else if (mData.type == V_ARRAY)
     {
-        impl = (VarSuppImpl*)mData.arrayData->getSupportImpl();
-        if (impl == NULL)
-        {
-            impl = (VarSuppImpl*)mData.arrayData->setSupportImpl(new VarSuppImpl());
-        }
+        return mData.arrayData->extInterface();
     }
-    if (impl != NULL)
+    dbgerr("Failed to get interface type=%s\n", typeName());
+    return sNullExtIntf;
+}
+
+
+void Variant::newFrom(Variant param)
+{
+    VarExtInterface* ext = cast<VarExtInterface>(param.extInterface().ptr());
+    if (ext)
     {
-        impl->mClassName.set(name);
-        impl->mSupp = supp;
+        ext->onNewExt(*this, param);
     }
     else
     {
-        dbgerr("Cannot set support data\n");
+        dbgerr("Null interface\n");
     }
 }
 
-void Variant::getSuppImplData(const char** name, void** supp)
-{
-    VarSuppImpl* impl = NULL;
 
-    if (mData.type == V_OBJECT)
+void Variant::save()
+{
+    VarExtInterface* ext = cast<VarExtInterface>(extInterface().ptr());
+
+    if (ext)
     {
-        impl = (VarSuppImpl*)mData.objectData->getSupportImpl();
-    }
-    else if (mData.type == V_ARRAY)
-    {
-        impl = (VarSuppImpl*)mData.arrayData->getSupportImpl();
-    }
-    if (impl != NULL)
-    {
-        *name = impl->mClassName.get();
-        *supp = impl->mSupp;
+        ext->onSaveExt(*this);
     }
     else
     {
-        dbgerr("Cannot get support data\n");
+        dbgerr("Null interface\n");
     }
+}
+
+
+void Variant::load(Variant param)
+{
+    VarExtInterface* ext = cast<VarExtInterface>(param.extInterface().ptr());
+    if (ext)
+    {
+        ext->onLoadExt(*this, param);
+    }
+    else
+    {
+        dbgerr("Null interface\n");
+    }
+}
+
+// VarExtInterface::
+
+void VarExtInterface::onAppend(Variant& arr, Variant& newelem)
+{
+}
+
+bool VarExtInterface::onNewExt(Variant& destobj, Variant& param)
+{
+    return false;
+}
+
+bool VarExtInterface::onSaveExt(Variant& sobj)
+{
+    return false;
+}
+
+bool VarExtInterface::onLoadExt(Variant& destobj, Variant& param)
+{
+    return false;
+}
+
+Variant* VarExtInterface::onAddMissingKey(Variant& destobj, const char* key)
+{
+    return NULL;
 }
 
 
